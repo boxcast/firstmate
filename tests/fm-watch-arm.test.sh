@@ -1295,7 +1295,7 @@ take_over_with_late_stop() {  # <home> <state> <fakebin> <arm-out> <owner> <watc
     FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT="$REARM_CONFIRM_SECONDS" \
     "$WATCH_ARM" --take-over "$owner" > "$armout" &
   ARM_PID=$!
-  sleep 7
+  sleep 15
   is_live_non_zombie "$watcher" || fail "fixture: the held watcher exited before its stop landed"
   kill -CONT "$watcher" 2>/dev/null || fail "fixture: could not release the held watcher"
   wait_for_exit "$owner" "$REARM_EXIT_POLLS" >/dev/null 2>&1 || true
