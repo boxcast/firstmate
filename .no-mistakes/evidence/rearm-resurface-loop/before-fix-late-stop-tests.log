@@ -1,0 +1,5 @@
+ok - watch-arm: a take-over whose stop lands late keeps an acknowledged episode quiet across the next re-arm
+ok - watch-arm: a take-over whose stop lands late still resurfaces unacknowledged handling
+watcher: secondmate liveness check failed
+ok - watch-arm: takeover preserves self-exit downtime and surfaces a recovery wake
+ok - watch-arm: --take-over owns a fresh cycle without a recovery wake and still surfaces queued work

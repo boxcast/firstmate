@@ -1,0 +1,6 @@
+=== BASE df259f0 bin/fm-watch-arm.sh, stop held 15s ===
+not ok - the take-over did not own a fresh cycle after its late stop: watcher: attached pid=1803 (beacon 9s)
+watcher: FAILED - cycle ended without an actionable reason
+=== FIX 00e6143 bin/fm-watch-arm.sh, stop held 15s ===
+ok - watch-arm: a take-over whose stop lands late keeps an acknowledged episode quiet across the next re-arm
+ok - watch-arm: a take-over whose stop lands late still resurfaces unacknowledged handling

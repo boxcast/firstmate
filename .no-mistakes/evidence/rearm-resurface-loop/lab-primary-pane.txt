@@ -1,0 +1,23 @@
+
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 (1M context) · Claude Team
+ ▝▝   ▝▝   ~/…/01M4PXRPGAZ0BJDZS2D6E5FEVK
+
+
+❯ Reply with the single word ok. Do not run any
+  tools.
+
+⏺ ok
+
+✻ Crunched for 3s · done 10:25 PM
+
+
+
+
+
+─────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────
+  ⚠ Transcript saving is off — inherited CLAUDE_CO…
+  [repos -> 01M4PXRPGAZ0BJDZS2D6E5FEVK] [Opus 5.5 …
+  ⏵⏵ auto mode on (shift+tab to cycle)

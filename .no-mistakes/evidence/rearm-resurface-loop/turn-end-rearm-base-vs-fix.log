@@ -1,0 +1,17 @@
+=== BASE df259f0: ack, late take-over stop (15s), next turn-end re-arm ===
+after ack: .watcher-down=acked:handling:11770.1791771275.ujh9kq
+take-over arm output (arm alive: no):
+  | watcher: attached pid=11272 (beacon 13s)
+  | watcher: FAILED - cycle ended without an actionable reason
+after take-over: .watcher-down=pending:downtime:11272.1791771291.H1uPwt
+next turn-end re-arm output:
+  | check: rearm-resurface
+wake queue rows:        0 ; .watcher-down=announced:downtime:11272.1791771291.H1uPwt
+=== FIX 00e6143: same sequence ===
+after ack: .watcher-down=acked:handling:49127.1791771330.lVXHmz
+take-over arm output (arm alive: yes):
+  | watcher: started pid=65041 (beacon fresh)
+after take-over: .watcher-down=acked:handling:49127.1791771330.lVXHmz
+next turn-end re-arm output:
+  | watcher: attached pid=65041 (beacon 0s)
+wake queue rows:        0 ; .watcher-down=acked:handling:49127.1791771330.lVXHmz

@@ -1,0 +1,3 @@
+ok - watch-arm: a take-over whose stop lands late keeps an acknowledged episode quiet across the next re-arm
+ok - watch-arm: a take-over whose stop lands late still resurfaces unacknowledged handling
+bash tests/fm-watch-arm.test.sh  4.66s user 5.93s system 27% cpu 38.416 total
