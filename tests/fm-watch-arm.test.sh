@@ -1264,6 +1264,126 @@ test_take_over_preserves_downtime_from_watcher_self_exit() {
   pass "watch-arm: takeover preserves self-exit downtime and surfaces a recovery wake"
 }
 
+# A take-over's TERM can land a whole poll late: bash 3.2 defers it until the
+# watcher's current command substitution returns. SIGSTOP reproduces that on
+# every bash - the watcher keeps the lock and takes the same TERM on SIGCONT -
+# but only outside the queue and marker locks, or the take-over would block on
+# them before it ever sent its TERM.
+hold_watcher_outside_recovery_locks() {  # <state> <watcher-pid>
+  local state=$1 watcher=$2 i=0
+  while [ "$i" -lt 100 ]; do
+    kill -STOP "$watcher" 2>/dev/null || return 1
+    if [ ! -e "$state/.wake-queue.lock" ] && [ ! -L "$state/.wake-queue.lock" ] \
+      && [ ! -e "$state/.watcher-down.lock" ] && [ ! -L "$state/.watcher-down.lock" ]; then
+      return 0
+    fi
+    kill -CONT "$watcher" 2>/dev/null || return 1
+    sleep 0.05
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# Start a take-over of <owner>'s held watcher, keep the stop pending past the
+# take-over's former five-second stop wait, then let it land.
+take_over_with_late_stop() {  # <home> <state> <fakebin> <arm-out> <owner> <watcher>
+  local home=$1 state=$2 fakebin=$3 armout=$4 owner=$5 watcher=$6
+  hold_watcher_outside_recovery_locks "$state" "$watcher" \
+    || fail "fixture: could not hold the watcher outside the recovery locks"
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT="$REARM_CONFIRM_SECONDS" \
+    "$WATCH_ARM" --take-over "$owner" > "$armout" &
+  ARM_PID=$!
+  sleep 15
+  is_live_non_zombie "$watcher" || fail "fixture: the held watcher exited before its stop landed"
+  kill -CONT "$watcher" 2>/dev/null || fail "fixture: could not release the held watcher"
+  wait_for_exit "$owner" "$REARM_EXIT_POLLS" >/dev/null 2>&1 || true
+  grep -q "arm_pid=$owner	watcher_pid=$watcher	.*signal=TERM	" "$state/.watch-cycle-exits.log" \
+    || fail "fixture: the held watcher did not end by the take-over's TERM: $(cat "$state/.watch-cycle-exits.log")"
+}
+
+# Main completed and acknowledged its handling turn, and the turn end's
+# take-over stop lands late. The take-over must still own a quiet fresh cycle
+# over the acknowledged episode, and the next re-arm must find nothing to
+# resurface: giving up on the late stop reopened the episode, and the retry's
+# fresh watcher woke main with an empty check: rearm-resurface after every turn.
+test_take_over_late_stop_keeps_an_acknowledged_episode_quiet() {
+  local dir state fakebin armout owner watcher acknowledged rearm rearmout i
+  dir=$(make_case take-over-late-stop-acked)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  rearmout="$dir/rearm.out"
+  start_rearm_arm "$dir" "$state" "$fakebin" "$dir/owner.out" "$$"
+  owner=$ARM_PID
+  watcher=$(cat "$state/.watch.lock/pid")
+  append_wake "$state" signal take-over "signal: fixture handled by main"
+  ack_wakes "$state" >/dev/null || fail "fixture: main could not acknowledge the handled wake"
+  acknowledged=$(cat "$state/.watcher-down")
+  case "$acknowledged" in acked:*) ;; *) fail "fixture: the episode was not acknowledged: $acknowledged" ;; esac
+  take_over_with_late_stop "$dir" "$state" "$fakebin" "$armout" "$owner" "$watcher"
+  i=0
+  while [ "$i" -lt "$REARM_REPORT_POLLS" ]; do
+    grep -q '^watcher: started pid=' "$armout" 2>/dev/null && break
+    is_live_non_zombie "$ARM_PID" || break
+    sleep 0.05
+    i=$((i + 1))
+  done
+  grep -q '^watcher: started pid=' "$armout" \
+    || fail "the take-over did not own a fresh cycle after its late stop: $(cat "$armout")"
+  ! grep -q '^watcher: FAILED' "$armout" || fail "the take-over reported a failure after its late stop: $(cat "$armout")"
+  [ "$(cat "$state/.watcher-down")" = "$acknowledged" ] \
+    || fail "the late stop reopened the acknowledged episode: $(cat "$state/.watcher-down")"
+  grep -q 'reason=taken-over	.*successor=started:' "$state/.watch-cycle-exits.log" \
+    || fail "the lifecycle ledger does not record the completed take-over: $(cat "$state/.watch-cycle-exits.log")"
+
+  # The next turn end re-arms, as the Stop hook's retry did after the failed take-over.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_ATTACH_POLL=0.1 FM_ARM_CONFIRM_TIMEOUT="$REARM_CONFIRM_SECONDS" \
+    "$WATCH_ARM" > "$rearmout" &
+  rearm=$!
+  wait_for_file_text "$rearmout" 'watcher: attached pid=' \
+    || fail "the re-arm did not attach to the take-over's cycle: $(cat "$rearmout")"
+  sleep 3
+  is_live_non_zombie "$ARM_PID" || fail "the taken-over cycle closed with no new work: $(cat "$armout")"
+  ! grep -q '^check: rearm-resurface' "$armout" "$rearmout" \
+    || fail "an acknowledged episode resurfaced: $(cat "$armout" "$rearmout")"
+  [ "$(cat "$state/.watcher-down")" = "$acknowledged" ] \
+    || fail "the re-arm reopened the acknowledged episode: $(cat "$state/.watcher-down")"
+  kill -TERM "$rearm" "$ARM_PID" 2>/dev/null || true
+  wait_for_exit "$rearm" 50 >/dev/null 2>&1 || true
+  wait_for_exit "$ARM_PID" 50 >/dev/null 2>&1 || true
+  pass "watch-arm: a take-over whose stop lands late keeps an acknowledged episode quiet across the next re-arm"
+}
+
+# The same late stop over a handling turn interrupted before its acknowledgement
+# leaves the episode open, so the take-over's fresh cycle must still resurface it.
+test_take_over_late_stop_still_resurfaces_unacknowledged_handling() {
+  local dir state fakebin armout owner watcher status
+  dir=$(make_case take-over-late-stop-unacked)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  start_rearm_arm "$dir" "$state" "$fakebin" "$dir/owner.out" "$$"
+  owner=$ARM_PID
+  watcher=$(cat "$state/.watch.lock/pid")
+  append_wake "$state" signal take-over "signal: fixture interrupted before acknowledgement"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" >/dev/null 2>&1 || fail "fixture: main could not drain the wake"
+  case "$(cat "$state/.watcher-down")" in
+    pending:handling:*|announced:handling:*) ;;
+    *) fail "fixture: the drain did not open handling: $(cat "$state/.watcher-down")" ;;
+  esac
+  take_over_with_late_stop "$dir" "$state" "$fakebin" "$armout" "$owner" "$watcher"
+  wait_for_exit "$ARM_PID" "$REARM_EXIT_POLLS"
+  status=$?
+  expect_code 0 "$status" "a take-over over unacknowledged handling resurfaces it and closes cleanly"
+  grep -q '^check: rearm-resurface' "$armout" \
+    || fail "unacknowledged handling did not resurface after a late take-over stop: $(cat "$armout")"
+  pass "watch-arm: a take-over whose stop lands late still resurfaces unacknowledged handling"
+}
+
 test_downtime_marker_does_not_follow_symlink() {
   local dir home state fakebin armout watcher_pid sentinel
   dir=$(make_case downtime-marker-symlink)
@@ -1614,3 +1734,5 @@ test_handling_delivered_rejects_a_superseded_generation
 test_take_over_attaches_to_a_cycle_the_named_arm_does_not_own
 test_take_over_owns_a_fresh_cycle_and_keeps_queued_work_surfacing
 test_take_over_preserves_downtime_from_watcher_self_exit
+test_take_over_late_stop_keeps_an_acknowledged_episode_quiet
+test_take_over_late_stop_still_resurfaces_unacknowledged_handling

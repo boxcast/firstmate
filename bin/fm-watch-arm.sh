@@ -76,8 +76,10 @@
 # arm would, and otherwise this arm owns a fresh cycle as a plain arm does.
 # Recovery restoration follows docs/watcher-continuity.md "Generation reuse";
 # an unconfirmed stop leaves downtime for the fresh cycle's recovery check.
+# The stop may land late, so a stopped watcher that still holds the lock is
+# followed up to the stall bound before the stop counts as outlived.
 # Any other watcher, or one that outlives the stop,
-# is attached to exactly as a plain arm attaches.
+# is handled exactly as a plain arm handles it.
 #
 # --stop: the same home-scoped stop without re-arming, for an owner that ends
 # its own supervision cycle on purpose (the supervision host's park boundary,
@@ -560,14 +562,21 @@ take_over_cycle() {  # <watcher-pid> <identity>
   if attached_holder_live "$pid"; then
     kill -TERM "$pid" 2>/dev/null || true
   fi
+  # Bash 3.2 defers that TERM until the watcher's current command substitution
+  # returns, which can be a whole poll. While the stopped watcher still holds
+  # this home's lock, follow it as attach_and_wait follows a slow holder; giving
+  # up early let its late close reopen an acknowledged episode for resurfacing.
   i=0
-  while [ "$i" -lt 50 ] && fm_pid_alive "$pid"; do
+  while fm_pid_alive "$pid"; do
+    if attached_holder_live "$pid"; then
+      [ "$(fm_path_age "$BEAT")" -lt "$STALL_BOUND" ] || return 1
+      sleep "$ATTACH_POLL"
+      continue
+    fi
+    [ "$i" -lt 50 ] || return 1
     sleep 0.1
     i=$((i + 1))
   done
-  if fm_pid_alive "$pid"; then
-    return 1
-  fi
   if cycle_delivered_reason; then
     cycle_log_append unknown unknown taken-over-delivered-wake none
     printf '%s\n' "$DELIVERED_REASON"
